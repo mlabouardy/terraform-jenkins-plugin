@@ -1,13 +1,18 @@
-package org.jenkinsci.plugins.terraform;
+package com.labouardy.terraform;
+import hudson.AbortException;
 import hudson.Launcher;
 import hudson.Extension;
 import hudson.FilePath;
+import hudson.model.AbstractBuild;
 import hudson.util.FormValidation;
 import hudson.model.AbstractProject;
+import hudson.model.Build;
+import hudson.model.BuildListener;
 import hudson.model.Run;
 import hudson.model.TaskListener;
 import hudson.tasks.Builder;
 import hudson.tasks.BuildStepDescriptor;
+import java.io.BufferedReader;
 import jenkins.tasks.SimpleBuildStep;
 import net.sf.json.JSONObject;
 import org.kohsuke.stapler.DataBoundConstructor;
@@ -16,6 +21,14 @@ import org.kohsuke.stapler.QueryParameter;
 
 import javax.servlet.ServletException;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Sample {@link Builder}.
@@ -23,9 +36,9 @@ import java.io.IOException;
  * <p>
  * When the user configures the project and enables this builder,
  * {@link DescriptorImpl#newInstance(StaplerRequest)} is invoked
- * and a new {@link HelloWorldBuilder} is created. The created
+ * and a new {@link TerraformBuilder} is created. The created
  * instance is persisted to the project configuration XML by using
- * XStream, so this allows you to use instance fields (like {@link #name})
+ * XStream, so this allows you to use instance fields (like {@link #templatePath})
  * to remember the configuration.
  *
  * <p>
@@ -33,34 +46,37 @@ import java.io.IOException;
  *
  * @author Kohsuke Kawaguchi
  */
-public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
+public class TerraformBuilder extends Builder implements SimpleBuildStep{
 
-    private final String name;
-
+    private final String templatePath;
+    private final String command;
+    private final String envVariables;
+    
     // Fields in config.jelly must match the parameter names in the "DataBoundConstructor"
     @DataBoundConstructor
-    public HelloWorldBuilder(String name) {
-        this.name = name;
+    public TerraformBuilder(String templatePath, String command, String envVariables) {
+        this.templatePath = templatePath;
+        this.command = command;
+        this.envVariables = envVariables;
     }
 
     /**
      * We'll use this from the {@code config.jelly}.
+     * @return Terraform template path in workspace
      */
-    public String getName() {
-        return name;
+    
+    public String getTemplatePath(){
+        return templatePath;
+    }
+    
+    public String getCommand(){
+        return command;
     }
 
-    @Override
-    public void perform(Run<?,?> build, FilePath workspace, Launcher launcher, TaskListener listener) {
-        // This is where you 'build' the project.
-        // Since this is a dummy, we just say 'hello world' and call that a build.
-
-        // This also shows how you can consult the global configuration of the builder
-        if (getDescriptor().getUseFrench())
-            listener.getLogger().println("Bonjour, "+name+"!");
-        else
-            listener.getLogger().println("Hello, "+name+"!");
+    public String getEnvVariables() {
+        return envVariables;
     }
+    
 
     // Overridden for better type safety.
     // If your plugin doesn't really define any property on Descriptor,
@@ -70,8 +86,48 @@ public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
         return (DescriptorImpl)super.getDescriptor();
     }
 
+    @Override
+    public void perform(Run<?, ?> run, FilePath workspace, Launcher launcher, TaskListener listener) throws InterruptedException, IOException {
+        String cmd = getDescriptor().getPath() + " " + getCommand() + " " + getTemplatePath();
+        launcher.launch()
+                 .pwd(workspace)
+                 .envs(getEnvVariables())
+                 .cmds(cmd)
+                 .stdout(listener)
+                 .join();
+        /*List<String> envp = new ArrayList<String>();
+        if(getEnvVariables() != null && getEnvVariables().trim().length() > 0){
+            for(String env:getEnvVariables().split(" "))
+                envp.add(env);
+        }
+        Runtime rt = Runtime.getRuntime();
+        try{
+           Process pr = rt.exec(cmd, envp.toArray(new String[0]));
+           pr.waitFor();
+           try(BufferedReader input = new BufferedReader(new InputStreamReader(pr.getInputStream()));){
+                String line = null; 
+                while ((line = input.readLine()) != null)
+                    listener.getLogger().println(line);
+            }catch(Exception e){
+                listener.error(e.getMessage());
+            }
+            
+            try(BufferedReader error = new BufferedReader(new InputStreamReader(pr.getErrorStream()));){
+                String line = null; 
+                while ((line = error.readLine()) != null)
+                    listener.getLogger().println(line);
+            }catch(Exception e){
+                throw new AbortException(e.getMessage());
+            }
+        }catch(Exception e){
+            throw new AbortException(e.getMessage());
+        }
+        */
+        listener.getLogger().println("OK:" + cmd);
+    }
+
     /**
-     * Descriptor for {@link HelloWorldBuilder}. Used as a singleton.
+     * Descriptor for {@link TerraformBuilder}. Used as a singleton.
      * The class is marked as public so that it can be accessed from views.
      *
      * <p>
@@ -87,7 +143,7 @@ public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
          * <p>
          * If you don't want fields to be persisted, use {@code transient}.
          */
-        private boolean useFrench;
+        private String path;
 
         /**
          * In order to load the persisted global configuration, you have to 
@@ -117,6 +173,13 @@ public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
                 return FormValidation.warning("Isn't the name too short?");
             return FormValidation.ok();
         }
+        
+        public FormValidation doCheckPath(@QueryParameter String value)
+                throws IOException, ServletException {
+            if (value.length() == 0)
+                return FormValidation.error("Please set a terraform binary path");
+            return FormValidation.ok();
+        }
 
         public boolean isApplicable(Class<? extends AbstractProject> aClass) {
             // Indicates that this builder can be used with all kinds of project types 
@@ -127,14 +190,14 @@ public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
          * This human readable name is used in the configuration screen.
          */
         public String getDisplayName() {
-            return "Say hello world";
+            return "Infrastructure as Code";
         }
 
         @Override
         public boolean configure(StaplerRequest req, JSONObject formData) throws FormException {
             // To persist global configuration information,
             // set that to properties and call save().
-            useFrench = formData.getBoolean("useFrench");
+            path = formData.getString("path");
             // ^Can also use req.bindJSON(this, formData);
             //  (easier when there are many fields; need set* methods for this, like setUseFrench)
             save();
@@ -146,9 +209,10 @@ public class HelloWorldBuilder extends Builder implements SimpleBuildStep {
          *
          * The method name is bit awkward because global.jelly calls this method to determine
          * the initial state of the checkbox by the naming convention.
+         * @return terraform binary path
          */
-        public boolean getUseFrench() {
-            return useFrench;
+        public String getPath() {
+            return path;
         }
     }
 }

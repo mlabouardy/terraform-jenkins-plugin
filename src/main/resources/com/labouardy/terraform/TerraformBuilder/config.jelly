@@ -1,0 +1,26 @@
+<?jelly escape-by-default='true'?>
+<j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:d="jelly:define" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:f="/lib/form">
+  <!--
+    This jelly script is used for per-project configuration.
+
+    See global.jelly for a general discussion about jelly script.
+  -->
+
+  <!--
+    Creates a text field that shows the value of the "name" property.
+    When submitted, it will be passed to the corresponding constructor parameter.
+  -->
+  <f:entry name="command" title="Command" field="command">
+    <select name="command" style="width:100%">
+        <option value="get">Download and install modules for configuration</option>
+        <option value="plan">Generate and show an execution plan</option>
+        <option value="apply">Build or changes infrastructure</option>
+    </select>
+  </f:entry>
+  <f:entry title="Template Path" field="templatePath">
+    <f:textbox />
+  </f:entry>
+  <f:entry title="Environnement Variables" field="envVariables" description="Additional env variables passed to terraform such as VSPHERE_USER=admin VSPHERE_PASSWORD=admin">
+    <f:textbox />
+  </f:entry>
+</j:jelly>

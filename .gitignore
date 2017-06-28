@@ -1,0 +1,6 @@
+target/
+work/
+.settings
+.terraform
+.classpath
+.project
